@@ -1,4 +1,3 @@
-
 "use client";
 
 import { useEffect, useMemo, useState, type FormEvent } from "react";
@@ -43,30 +42,37 @@ const defaultSettings: Settings = {
   advanceBooking: "30",
   startTime: "09:00",
   endTime: "18:00",
-  workingDays: ["Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday"],
+  workingDays: [
+    "Monday",
+    "Tuesday",
+    "Wednesday",
+    "Thursday",
+    "Friday",
+    "Saturday",
+  ],
 };
 
 const getLocalDate = (date: Date) => {
   const year = date.getFullYear();
   const month = String(date.getMonth() + 1).padStart(2, "0");
   const day = String(date.getDate()).padStart(2, "0");
+
   return `${year}-${month}-${day}`;
 };
 
 const getMinutes = (time: string) => {
   const [hours, minutes] = time.split(":").map(Number);
+
   return hours * 60 + minutes;
 };
 
 const formatTime = (time: string) => {
   const [hours, minutes] = time.split(":").map(Number);
-  const date = new Date();
-  date.setHours(hours, minutes, 0, 0);
-  return date.toLocaleTimeString("en-IN", {
-    hour: "numeric",
-    minute: "2-digit",
-    hour12: true,
-  });
+
+  const suffix = hours >= 12 ? "PM" : "AM";
+  const formattedHour = hours % 12 || 12;
+
+  return `${formattedHour}:${String(minutes).padStart(2, "0")} ${suffix}`;
 };
 
 export default function BookPage() {
@@ -87,32 +93,48 @@ export default function BookPage() {
   const [error, setError] = useState("");
   const [success, setSuccess] = useState(false);
 
+  // Current date is initialized only after client mount.
+  const [currentDate, setCurrentDate] = useState<Date | null>(null);
+
   useEffect(() => {
+    let isMounted = true;
+
+    setCurrentDate(new Date());
+
     const loadData = async () => {
       try {
         setLoading(true);
         setError("");
 
-        const [servicesRes, settingsRes, bookingsRes] = await Promise.all([
-          fetch("/api/services", { cache: "no-store" }),
-          fetch("/api/settings", { cache: "no-store" }),
-          fetch("/api/bookings", { cache: "no-store" }),
-        ]);
+        const [servicesRes, settingsRes, bookingsRes] =
+          await Promise.all([
+            fetch("/api/services", { cache: "no-store" }),
+            fetch("/api/settings", { cache: "no-store" }),
+            fetch("/api/bookings", { cache: "no-store" }),
+          ]);
 
         const servicesJson = await servicesRes.json();
         const settingsJson = await settingsRes.json();
         const bookingsJson = await bookingsRes.json();
 
+        if (!isMounted) return;
+
         if (!servicesRes.ok) {
-          throw new Error(servicesJson.message || "Unable to load services.");
+          throw new Error(
+            servicesJson.message || "Unable to load services."
+          );
         }
 
         if (!settingsRes.ok) {
-          throw new Error(settingsJson.message || "Unable to load business settings.");
+          throw new Error(
+            settingsJson.message || "Unable to load business settings."
+          );
         }
 
         if (!bookingsRes.ok) {
-          throw new Error(bookingsJson.message || "Unable to load available slots.");
+          throw new Error(
+            bookingsJson.message || "Unable to load available slots."
+          );
         }
 
         const serviceList = Array.isArray(servicesJson)
@@ -136,28 +158,48 @@ export default function BookPage() {
 
         setBookings(bookingList);
       } catch (err) {
-        setError(
-          err instanceof Error ? err.message : "Something went wrong."
-        );
+        if (isMounted) {
+          setError(
+            err instanceof Error
+              ? err.message
+              : "Something went wrong."
+          );
+        }
       } finally {
-        setLoading(false);
+        if (isMounted) {
+          setLoading(false);
+        }
       }
     };
 
     loadData();
+
+    return () => {
+      isMounted = false;
+    };
   }, []);
 
   const activeService = services.find(
     (service) => service._id === selectedService
   );
 
+  // Generate available dates after client mount.
   const availableDates = useMemo(() => {
+    if (!currentDate) return [];
+
     const days = Number(settings.advanceBooking || 30);
-    const result: { value: string; label: string }[] = [];
-    const workingDays = settings.workingDays || defaultSettings.workingDays!;
+
+    const result: {
+      value: string;
+      label: string;
+    }[] = [];
+
+    const workingDays =
+      settings.workingDays || defaultSettings.workingDays!;
 
     for (let i = 0; i <= Math.min(days, 90); i++) {
-      const date = new Date();
+      const date = new Date(currentDate);
+
       date.setDate(date.getDate() + i);
 
       const dayName = date.toLocaleDateString("en-US", {
@@ -177,13 +219,24 @@ export default function BookPage() {
     }
 
     return result;
-  }, [settings]);
+  }, [settings, currentDate]);
 
+  // Generate available appointment slots.
   const availableSlots = useMemo(() => {
-    if (!activeService || !selectedDate) return [];
+    if (!currentDate || !activeService || !selectedDate) {
+      return [];
+    }
 
-    const slotDuration = Math.max(1, Number(settings.slotDuration || 30));
-    const serviceDuration = Math.max(1, Number(activeService.duration || 30));
+    const slotDuration = Math.max(
+      1,
+      Number(settings.slotDuration || 30)
+    );
+
+    const serviceDuration = Math.max(
+      1,
+      Number(activeService.duration || 30)
+    );
+
     const start = getMinutes(settings.startTime || "09:00");
     const end = getMinutes(settings.endTime || "18:00");
 
@@ -196,6 +249,11 @@ export default function BookPage() {
 
     const slots: string[] = [];
 
+    const todayDate = getLocalDate(currentDate);
+
+    const currentMinutes =
+      currentDate.getHours() * 60 + currentDate.getMinutes();
+
     for (
       let minutes = start;
       minutes + serviceDuration <= end;
@@ -203,6 +261,7 @@ export default function BookPage() {
     ) {
       const hours = String(Math.floor(minutes / 60)).padStart(2, "0");
       const mins = String(minutes % 60).padStart(2, "0");
+
       const time = `${hours}:${mins}`;
 
       const slotEnd = minutes + serviceDuration;
@@ -215,8 +274,7 @@ export default function BookPage() {
       });
 
       const isPast =
-        selectedDate === getLocalDate(new Date()) &&
-        minutes <= new Date().getHours() * 60 + new Date().getMinutes();
+        selectedDate === todayDate && minutes <= currentMinutes;
 
       if (!isBooked && !isPast) {
         slots.push(time);
@@ -224,9 +282,17 @@ export default function BookPage() {
     }
 
     return slots;
-  }, [activeService, selectedDate, bookings, settings]);
+  }, [
+    currentDate,
+    activeService,
+    selectedDate,
+    bookings,
+    settings,
+  ]);
 
-  const handleSubmit = async (event: FormEvent<HTMLFormElement>) => {
+  const handleSubmit = async (
+    event: FormEvent<HTMLFormElement>
+  ) => {
     event.preventDefault();
 
     setError("");
@@ -267,7 +333,9 @@ export default function BookPage() {
       const result = await response.json();
 
       if (!response.ok) {
-        throw new Error(result.message || "Unable to create booking.");
+        throw new Error(
+          result.message || "Unable to create booking."
+        );
       }
 
       setSuccess(true);
@@ -277,7 +345,9 @@ export default function BookPage() {
       setPhone("");
     } catch (err) {
       setError(
-        err instanceof Error ? err.message : "Booking failed. Please try again."
+        err instanceof Error
+          ? err.message
+          : "Booking failed. Please try again."
       );
     } finally {
       setSubmitting(false);
@@ -305,9 +375,11 @@ export default function BookPage() {
         <span className="booking-eyebrow">
           <i className="bi bi-stars" /> SIMPLE & SMART SCHEDULING
         </span>
+
         <h1>
           Book Your <span>Appointment</span>
         </h1>
+
         <p>
           Choose your service, select a convenient time and confirm your
           appointment in just a few steps.
@@ -321,11 +393,14 @@ export default function BookPage() {
               <div className="success-icon">
                 <i className="bi bi-check-lg" />
               </div>
+
               <h2>Booking Submitted!</h2>
+
               <p>
-                Your appointment request has been received. The business will
-                review and confirm your booking.
+                Your appointment request has been received. The business
+                will review and confirm your booking.
               </p>
+
               <button
                 className="booking-submit"
                 onClick={() => {
@@ -338,6 +413,7 @@ export default function BookPage() {
                 Book Another Appointment
                 <i className="bi bi-arrow-right" />
               </button>
+
               <Link href="/" className="success-home">
                 Back to Home
               </Link>
@@ -350,6 +426,7 @@ export default function BookPage() {
                   <h2>Make a Reservation</h2>
                   <p>Fill in your details to schedule an appointment.</p>
                 </div>
+
                 <div className="form-heading-icon">
                   <i className="bi bi-calendar2-week" />
                 </div>
@@ -388,7 +465,9 @@ export default function BookPage() {
                           type="button"
                           key={service._id}
                           className={`public-service-option ${
-                            selectedService === service._id ? "selected" : ""
+                            selectedService === service._id
+                              ? "selected"
+                              : ""
                           }`}
                           onClick={() => {
                             setSelectedService(service._id);
@@ -398,11 +477,14 @@ export default function BookPage() {
                           <span className="service-option-icon">
                             <i className="bi bi-briefcase" />
                           </span>
+
                           <span className="service-option-content">
                             <strong>{service.name}</strong>
+
                             <small>
                               {service.duration} min · {service.category}
                             </small>
+
                             <b>
                               {new Intl.NumberFormat("en-IN", {
                                 style: "currency",
@@ -411,6 +493,7 @@ export default function BookPage() {
                               }).format(service.price)}
                             </b>
                           </span>
+
                           <i
                             className={`bi ${
                               selectedService === service._id
@@ -433,7 +516,10 @@ export default function BookPage() {
                     </div>
                   </div>
 
-                  <label className="public-label">Appointment Date</label>
+                  <label className="public-label">
+                    Appointment Date
+                  </label>
+
                   <select
                     className="public-input"
                     value={selectedDate}
@@ -442,9 +528,10 @@ export default function BookPage() {
                       setSelectedTime("");
                     }}
                     required
-                    disabled={!activeService}
+                    disabled={!activeService || !currentDate}
                   >
                     <option value="">Select a date</option>
+
                     {availableDates.map((date) => (
                       <option key={date.value} value={date.value}>
                         {date.label}
@@ -495,6 +582,7 @@ export default function BookPage() {
                   <div className="public-form-grid">
                     <div className="public-field full-width">
                       <label className="public-label">Full Name</label>
+
                       <input
                         className="public-input"
                         type="text"
@@ -509,6 +597,7 @@ export default function BookPage() {
 
                     <div className="public-field">
                       <label className="public-label">Email Address</label>
+
                       <input
                         className="public-input"
                         type="email"
@@ -521,6 +610,7 @@ export default function BookPage() {
 
                     <div className="public-field">
                       <label className="public-label">Phone Number</label>
+
                       <input
                         className="public-input"
                         type="tel"
@@ -544,7 +634,10 @@ export default function BookPage() {
                     }
                   >
                     {submitting ? "Submitting..." : "Confirm Appointment"}
-                    {!submitting && <i className="bi bi-arrow-right" />}
+
+                    {!submitting && (
+                      <i className="bi bi-arrow-right" />
+                    )}
                   </button>
 
                   <p className="booking-secure-note">
@@ -562,6 +655,7 @@ export default function BookPage() {
             <span className="side-card-icon">
               <i className="bi bi-calendar-check" />
             </span>
+
             <h3>Appointment Summary</h3>
             <p>Review your selection before confirming.</p>
           </div>
@@ -579,7 +673,9 @@ export default function BookPage() {
           <div className="summary-item">
             <span>Duration</span>
             <strong>
-              {activeService ? `${activeService.duration} minutes` : "—"}
+              {activeService
+                ? `${activeService.duration} minutes`
+                : "—"}
             </strong>
           </div>
 
@@ -590,11 +686,14 @@ export default function BookPage() {
 
           <div className="summary-item">
             <span>Time</span>
-            <strong>{selectedTime ? formatTime(selectedTime) : "Not selected"}</strong>
+            <strong>
+              {selectedTime ? formatTime(selectedTime) : "Not selected"}
+            </strong>
           </div>
 
           <div className="summary-total">
             <span>Service Price</span>
+
             <strong>
               {activeService
                 ? new Intl.NumberFormat("en-IN", {
@@ -608,6 +707,7 @@ export default function BookPage() {
 
           <div className="side-help">
             <i className="bi bi-info-circle" />
+
             <p>
               Your booking will remain pending until the business confirms
               your appointment.
@@ -624,11 +724,10 @@ export default function BookPage() {
       </section>
 
       <footer className="public-booking-footer">
-        © {new Date().getFullYear()} {settings.businessName || "QuickBook"}.
-        All rights reserved.
+        © {currentDate?.getFullYear() ?? ""}{" "}
+        {settings.businessName || "QuickBook"}. All rights reserved.
       </footer>
-
-      <style jsx>{`
+            <style jsx>{`
         .public-booking-page {
           min-height: 100vh;
           background: #f7f8fc;
