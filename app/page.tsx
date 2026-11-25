@@ -342,7 +342,7 @@ export default function Home() {
             QuickBook<span className="brand-dot">.</span>
           </Link>
 
-          <p>© {new Date().getFullYear()} QuickBook. All rights reserved.</p>
+          <p>© 2026 QuickBook. All rights reserved.</p>
 
           <div>
             <Link href="/login">Admin Login</Link>
